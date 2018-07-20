@@ -1,0 +1,162 @@
+---
+title: "Churn Analysis-Telco data"
+author: "Wei-Ting,Lin"
+date: "7/15/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#### Churn Analysis using Logistic Regression with Telco data
+
+> Goal : predict behavior to retain customers
+
+The data set includes information about:
+
+* Customers who left within the last month – the column is called Churn
+* Services that each customer has signed up for – phone, multiple lines, internet, online security, online backup, device protection, tech support, and streaming TV and movies
+* Customer account information – how long they’ve been a customer, contract, payment method, paperless billing, monthly charges, and total charges
+* Demographic info about customers – gender, age range, and if they have partners and dependents
+
+
+data source <https://www.kaggle.com/blastchar/telco-customer-churn>
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(MASS)
+library(boot)
+library(caret)
+library(e1071)
+```
+
+
+```{r}
+#import data (default stringAsFactor = TRUE )
+customer <- read.csv("~/Onedrive/R_coding/test_git/WA_Fn-UseC_-Telco-Customer-Churn.csv")
+View(customer)
+ 
+```
+
+### Data wrangling 
+```{r}
+# Make ID back to correct format
+customer$customerID <- as.character(customer$customerID)
+
+#reorder
+customer <- customer[c(1,21,2:20)]
+
+# scan missing value
+colSums(is.na(customer))
+
+#observation with missing values 
+missing <- filter(customer, is.na(customer$TotalCharges) == TRUE )
+
+# since TotalCharges is roughly equals to tenure * monthly charges, I replace the missing value accordingly.
+customer_m <- customer %>% mutate(TotalCharges = ifelse(is.na(customer$TotalCharges), customer$MonthlyCharges*customer$tenure, TotalCharges) )
+
+```
+
+
+#### check for outliers
+```{r}
+
+boxplot(customer_m$tenure)
+
+boxplot(customer_m$MonthlyCharges)
+# not outliers 
+```
+
+
+### Exploring data 
+#### How many churns in this dataset ? 
+```{r}
+ggplot(customer_m, aes(x = Churn))+
+  geom_histogram(stat = "count", fill = c("sky blue", "orange"))
+  
+# churn yes : 1869 , no: 5174
+```
+
+
+#### When do customer churns ? 
+```{r}
+# churn mostly happens in short tenure
+customer_m %>% filter(customer_m$Churn == "Yes") %>% 
+  ggplot( aes(x=  tenure))+
+  geom_bar(fill = "orange" )
+```
+
+
+#### Model Specification
+```{r}
+
+# full logistic model 
+
+logisticModelFull <- glm(Churn ~  gender + SeniorCitizen + Partner + Dependents + tenure + PhoneService + MultipleLines + InternetService + OnlineSecurity + OnlineBackup + DeviceProtection + TechSupport + StreamingTV + StreamingMovies + Contract + PaperlessBilling + PaymentMethod + MonthlyCharges , family = "binomial", customer_m)
+
+summary(logisticModelFull)
+```
+
+#### new model (optimize model by finding the min. AIC value)
+
+```{r}
+
+logisticModelNew <-  stepAIC(logisticModelFull, trace = 0)
+
+summary(logisticModelNew)
+```
+
+
+#### Interpretation of coefficient 
+interpretation of odds : eg.  user with  Multiple Lines (MultipleLinesYes) increase the odd of churn by 35%. Being a senior citizen is 24% more likely to churn than non-senior citizen group. 
+```{r}
+# transform Coefficient to Odds
+
+odds <-  coef(logisticModelNew) %>% exp() %>% round(2)
+
+odds
+
+```
+
+
+***
+
+### Out-of-sample validation and cross validation
+
+#### devide data into training & testing set
+* Training set : 2/3 of data 
+* Testing set : 1/3 of data
+```{r}
+#generating random index for training & testing set
+set.seed(2345)
+
+customer_m$isTrain <- rbinom(nrow(customer_m),1,0.66)
+
+train <-  customer_m %>% filter(customer_m$isTrain =="1")
+test <- customer_m %>%  filter(customer_m$isTrain == "0")
+```
+
+
+
+#### train model 
+
+```{r}
+# modeling 
+LogisticTrainNew <- glm( Churn ~ gender + SeniorCitizen + Partner + Dependents + tenure + PhoneService + MultipleLines + InternetService + OnlineSecurity + OnlineBackup + DeviceProtection + TechSupport + StreamingTV + StreamingMovies + Contract + PaperlessBilling + PaymentMethod + MonthlyCharges , family = "binomial", train)
+
+#prediciton 
+test$predictNew <- predict(LogisticTrainNew , type = "response" , newdata = test)
+
+
+#confusion matrix & accuracy 
+confMatrix <- confusion.matrix(test$Churn, test$predictNew, threshold = 0.5) 
+
+```
+
+
+
